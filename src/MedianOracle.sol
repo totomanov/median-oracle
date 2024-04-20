@@ -5,12 +5,11 @@ import {TickLib} from "src/TickLib.sol";
 import {RingState, RingStateLib} from "src/RingStateLib.sol";
 
 contract MedianOracle {
-    int256 constant TICK_TRUNCATION = 30;
     uint256 internal constant MAX_AGE = 65535;
     uint256 internal constant MAX_RING_SIZE = 65535;
     uint256 internal immutable RING_SIZE;
     RingState internal state;
-    uint256[8192] internal ringBuffer;
+    uint256[MAX_RING_SIZE] internal ringBuffer;
 
     error OutOfRange();
 
@@ -21,15 +20,13 @@ contract MedianOracle {
     }
 
     function updateOracle(int256 newTick) external {
-        TickLib.checkTick(newTick);
+        TickLib.checkBounds(newTick);
+        newTick = TickLib.quantise(newTick);
+
+        (int256 currTick, uint256 ringCurr, uint256 lastUpdate) = state.unpack();
+        if (newTick == currTick) return;
 
         unchecked {
-            (int256 currTick, uint256 ringCurr, uint256 lastUpdate) = state.unpack();
-
-            newTick = quantiseTick(newTick);
-
-            if (newTick == currTick) return;
-
             uint256 elapsed = block.timestamp - lastUpdate;
 
             if (elapsed != 0) {
@@ -41,15 +38,15 @@ contract MedianOracle {
         }
     }
 
-    function readOracle(uint256 desiredAge)
-        external
-        view
-        returns (uint256, /* actualAge */ int256, /* median */ int256 /* average */ )
-    {
+    function readOracle(uint256 desiredAge) external view returns (uint256, int256, int256) {
+        // returns (actualAge, median, average)
         if (desiredAge > MAX_AGE) revert OutOfRange();
 
         unchecked {
             (int256 currTick, uint256 ringCurr, uint256 cache) = state.unpack();
+            // int currTick = currTick;
+            // uint ringCurr = ringCurr;
+            // uint cache = lastUpdate; // stores lastUpdate for first part of function, but then overwritten and used for something else
 
             uint256[] memory arr;
             uint256 actualAge = 0;
@@ -79,7 +76,7 @@ contract MedianOracle {
                             mstore(freeMemoryPointer, packed)
                             freeMemoryPointer := add(freeMemoryPointer, 0x20)
                         }
-                        ++arrSize;
+                        arrSize++;
                     }
 
                     currTick = TickLib.unquantise(currTick) * int256(duration); // currTick now becomes the average accumulator
@@ -92,13 +89,14 @@ contract MedianOracle {
                     cache = type(uint256).max; // overwrite lastUpdate, use to cache storage reads
 
                     while (actualAge != desiredAge) {
-                        if (cache == type(uint256).max) cache = ringBuffer[i / 8];
-                        uint256 entry = cache >> (32 * (i % 8));
                         int256 tick;
                         uint256 duration;
-                        assembly {
-                            tick := and(0xFFFF, sar(16, entry))
-                            duration := and(0xFFFF, entry)
+
+                        {
+                            if (cache == type(uint256).max) cache = ringBuffer[i / 8];
+                            uint256 entry = cache >> (32 * (i % 8));
+                            tick = int256(int16(uint16((entry >> 16) & 0xFFFF)));
+                            duration = entry & 0xFFFF;
                         }
 
                         if (duration == 0) break; // uninitialised
@@ -112,7 +110,7 @@ contract MedianOracle {
                             mstore(freeMemoryPointer, packed)
                             freeMemoryPointer := add(freeMemoryPointer, 0x20)
                         }
-                        ++arrSize;
+                        arrSize++;
 
                         currTick += TickLib.unquantise(tick) * int256(duration);
 
@@ -227,12 +225,8 @@ contract MedianOracle {
     }
 
     function writeRing(uint256 index, int256 tick, uint256 duration) internal {
-        uint256 packed;
         assembly {
-            packed := or(duration, sar(16, tick))
-        }
-
-        assembly {
+            let packed := or(duration, sar(16, tick))
             let shift := mul(32, mod(index, 8))
             let slot := add(ringBuffer.slot, div(index, 8))
             let value := sload(slot)
@@ -244,11 +238,5 @@ contract MedianOracle {
 
     function clampTime(uint256 t) internal pure returns (uint256 tc) {
         return t < MAX_AGE ? t : MAX_AGE;
-    }
-
-    function quantiseTick(int256 tick) private pure returns (int256) {
-        unchecked {
-            return (tick + (tick < 0 ? -(TICK_TRUNCATION - 1) : int256(0))) / TICK_TRUNCATION;
-        }
     }
 }

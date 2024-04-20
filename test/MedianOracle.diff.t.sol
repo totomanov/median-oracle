@@ -14,6 +14,8 @@ contract MedianOracleDiffHarness is Test {
 
     MedianOracle oracle;
     MedianOracleReference oracleRef;
+    uint256 public numErrors;
+    string[] public errors;
 
     constructor() {
         oracle = new MedianOracle(RING_SIZE);
@@ -27,21 +29,21 @@ contract MedianOracleDiffHarness is Test {
     }
 
     function readOracle(uint256 desiredAge) external {
-        // desiredAge = bound(desiredAge, 0, type(uint16).max);
+        desiredAge = bound(desiredAge, 0, type(uint16).max);
         bytes memory cdata = abi.encodeCall(oracleRef.readOracle, (desiredAge));
         (bool success0, bytes memory data0) = address(oracle).call(cdata);
         (bool success1, bytes memory data1) = address(oracleRef).call(cdata);
-        assertEq(success0, success1, "Different success: %s, %s");
+        if (success0 != success1) return recordError("Different success");
 
         (uint256 actualAge0, int256 median0, int256 average0) = abi.decode(data0, (uint256, int256, int256));
         (uint16 actualAge1, int24 median1, int24 average1) = abi.decode(data1, (uint16, int24, int24));
-        assertEqRich(actualAge0, uint256(actualAge1), "actualAge");
-        assertEqRich(median0, int256(median1), "median");
-        assertEqRich(average0, int256(average1), "average");
+        if (actualAge0 != actualAge1) return recordError("Different actualAge", actualAge0, actualAge1);
+        if (median0 != median1) return recordError("Different median");
+        if (average0 != average1) return recordError("Different average");
     }
 
     function warp(uint256 delta) external {
-        delta = bound(delta, 1, 1 days);
+        delta = bound(delta, 1, 65535 * 2);
         vm.warp(delta);
     }
 
@@ -56,6 +58,16 @@ contract MedianOracleDiffHarness is Test {
         assertEqRich(ringSize0, uint256(ringSize1), "ringSize");
         assertEqRich(lastUpdate0, uint256(lastUpdate1), "lastUpdate");
         assertEqRich(currTick0, int256(currTick1), "currTick");
+    }
+
+    function recordError(string memory err, uint256 a, uint256 b) internal {
+        errors.push(err);
+        numErrors += 1;
+    }
+
+    function recordError(string memory err) internal {
+        errors.push(err);
+        numErrors += 1;
     }
 
     function assertEqRich(int256 a, int256 b, string memory param) internal pure {
@@ -75,7 +87,14 @@ contract MedianOracleDiffTest is Test {
         targetContract(address(harness));
     }
 
-    function invariant_Equivalent() public {
+    function invariant_Equivalent() public view {
         harness.assertEqualState();
+        uint256 numErrors = harness.numErrors();
+
+        for (uint256 i = 0; i < numErrors; ++i) {
+            string memory err = harness.errors(i);
+            console2.log(err);
+        }
+        if (numErrors != 0) assert(false);
     }
 }

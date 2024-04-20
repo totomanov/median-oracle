@@ -9,7 +9,7 @@ library TickLib {
 
     error TickOutOfRange();
 
-    function checkTick(int256 tick) internal pure {
+    function checkBounds(int256 tick) internal pure {
         if (tick < TICK_MIN || tick > TICK_MAX) revert TickOutOfRange();
     }
 
