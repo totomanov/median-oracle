@@ -9,8 +9,6 @@ import {MedianOracleReference} from "test/MedianOracleReference.sol";
 
 contract MedianOracleDiffHarness is Test {
     uint16 internal constant RING_SIZE = 144;
-    int24 internal constant TICK_MIN = -887272;
-    int24 internal constant TICK_MAX = 887272;
 
     MedianOracle oracle;
     MedianOracleReference oracleRef;
@@ -23,7 +21,7 @@ contract MedianOracleDiffHarness is Test {
     }
 
     function updateOracle(int256 newTick) external {
-        newTick = bound(newTick, TICK_MIN, TICK_MAX);
+        newTick = bound(newTick, TickLib.TICK_MIN, TickLib.TICK_MAX);
         oracle.updateOracle(newTick);
         oracleRef.updateOracle(newTick);
     }
@@ -38,13 +36,13 @@ contract MedianOracleDiffHarness is Test {
         (uint256 actualAge0, int256 median0, int256 average0) = abi.decode(data0, (uint256, int256, int256));
         (uint16 actualAge1, int24 median1, int24 average1) = abi.decode(data1, (uint16, int24, int24));
         if (actualAge0 != actualAge1) return recordError("Different actualAge", actualAge0, actualAge1);
-        if (median0 != median1) return recordError("Different median");
-        if (average0 != average1) return recordError("Different average");
+        if (median0 != int256(median1)) return recordError("Different median");
+        if (average0 != int256(average1)) return recordError("Different average");
     }
 
-    function warp(uint256 delta) external {
+    function skipTime(uint256 delta) external {
         delta = bound(delta, 1, 65535 * 2);
-        vm.warp(delta);
+        skip(delta);
     }
 
     function assertEqualState() external view {
@@ -85,16 +83,18 @@ contract MedianOracleDiffTest is Test {
     function setUp() public {
         harness = new MedianOracleDiffHarness();
         targetContract(address(harness));
+        vm.warp(365 days);
     }
 
-    function invariant_Equivalent() public view {
+    function invariant_Equivalent() public {
         harness.assertEqualState();
+        harness.readOracle(10);
         uint256 numErrors = harness.numErrors();
 
         for (uint256 i = 0; i < numErrors; ++i) {
             string memory err = harness.errors(i);
             console2.log(err);
         }
-        if (numErrors != 0) assert(false);
+        if (numErrors != 0) assertTrue(false);
     }
 }

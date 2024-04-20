@@ -7,8 +7,6 @@ import {TickLib} from "src/TickLib.sol";
 
 contract MedianOracleTest is Test {
     uint16 internal constant RING_SIZE = 144;
-    int24 internal constant TICK_MIN = -887272;
-    int24 internal constant TICK_MAX = 887272;
     MedianOracle internal oracle;
 
     function setUp() public {
@@ -33,24 +31,24 @@ contract MedianOracleTest is Test {
         checkTick(-60, -45);
         checkTick(-61, -75);
 
-        checkTick(TICK_MAX, 887265);
-        checkTick(TICK_MIN, -887265);
+        checkTick(TickLib.TICK_MAX, 887265);
+        checkTick(TickLib.TICK_MIN, -887265);
     }
 
     function testQuantizeTick_Nonnegative(int256 tick) public pure {
-        tick = bound(tick, 0, TICK_MAX);
+        tick = bound(tick, 0, TickLib.TICK_MAX);
         int256 qtick = TickLib.quantise(tick);
         assertEq(qtick, tick / TickLib.TICK_TRUNCATION);
     }
 
     function testQuantizeTick_Negative(int256 tick) public pure {
-        tick = bound(tick, TICK_MIN, 0);
+        tick = bound(tick, TickLib.TICK_MIN, 0);
         int256 qtick = TickLib.quantise(tick);
         assertEq(qtick, (tick - TickLib.TICK_TRUNCATION + 1) / TickLib.TICK_TRUNCATION);
     }
 
     function testUnquantizeTick(int256 qtick) public pure {
-        qtick = bound(qtick, TICK_MIN, TICK_MAX);
+        qtick = bound(qtick, TickLib.TICK_MIN, TickLib.TICK_MAX);
         int256 tick = TickLib.unquantise(qtick);
         assertEq(tick, qtick * TickLib.TICK_TRUNCATION + TickLib.TICK_TRUNCATION / 2);
     }
@@ -61,7 +59,7 @@ contract MedianOracleTest is Test {
         (, int256 median,) = oracle.readOracle(1800);
 
         assertEq(median, tickOut);
-        assertGe(median, TICK_MIN);
-        assertLe(median, TICK_MAX);
+        assertGe(median, TickLib.TICK_MIN);
+        assertLe(median, TickLib.TICK_MAX);
     }
 }

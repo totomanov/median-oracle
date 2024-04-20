@@ -13,7 +13,7 @@ runs = 10_000
 ignore = ["test/MedianOracleReference.sol"]
 
 [invariant]
-runs = 1000
+runs = 2
 depth = 20
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

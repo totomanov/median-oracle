@@ -44,9 +44,6 @@ contract MedianOracle {
 
         unchecked {
             (int256 currTick, uint256 ringCurr, uint256 cache) = state.unpack();
-            // int currTick = currTick;
-            // uint ringCurr = ringCurr;
-            // uint cache = lastUpdate; // stores lastUpdate for first part of function, but then overwritten and used for something else
 
             uint256[] memory arr;
             uint256 actualAge = 0;
@@ -139,58 +136,57 @@ contract MedianOracle {
     /// @param arr The array to search.
     /// @param targetWeight The weight to stop at.
     /// @dev Implements modified QuickSelect that accounts for item weights.
-    function weightedMedian(uint256[] memory arr, uint256 targetWeight) internal pure returns (uint256) {
-        unchecked {
-            uint256 weightAccum = 0;
-            uint256 left = 0;
-            uint256 right = (arr.length - 1) * 32;
-            uint256 arrp;
-
-            assembly {
-                arrp := add(arr, 32)
-            }
-
-            while (true) {
-                if (left == right) return memload(arrp, left);
-
-                uint256 pivot = memload(arrp, (left + right) / 2);
-                uint256 i = left - 32;
-                uint256 j = right + 32;
-                uint256 leftWeight = 0;
-
-                while (true) {
-                    i += 32;
-                    while (true) {
-                        uint256 w = memload(arrp, i);
-                        if (w >= pivot) break;
-                        leftWeight += w & 0xFFFF;
-                        i += 32;
+    function weightedMedian(uint256[] memory arr, uint256 targetWeight) private pure returns (uint256 r) {
+        assembly {
+            let weightAccum := 0
+            let left := 0
+            let right := mul(32, sub(mload(arr), 1))
+            let arrp := add(arr, 32)
+            for {} iszero(eq(left, right)) {} {
+                let pivot := mload(add(arrp, shl(5, shr(6, add(left, right)))))
+                let i := left
+                let j := add(right, 32)
+                let leftWeight := 0
+                for {} 1 {} {
+                    let word := 0
+                    for {} 1 {} {
+                        word := mload(add(arrp, i))
+                        if iszero(lt(word, pivot)) { break }
+                        leftWeight := add(leftWeight, and(word, 0xFFFF))
+                        i := add(i, 32)
                     }
 
-                    do {
-                        j -= 32;
-                    } while (memload(arrp, j) > pivot);
-
-                    if (i > j) break;
-                    if (i == j) {
-                        leftWeight += memload(arrp, j) & 0xFFFF;
-                        break;
+                    for {} 1 {} {
+                        j := sub(j, 32)
+                        word := mload(add(arrp, j))
+                        if iszero(gt(word, pivot)) { break }
                     }
 
-                    leftWeight += memswap(arrp, i, j) & 0xFFFF;
+                    if lt(i, j) {
+                        let iOffset := add(arrp, i)
+                        let jOffset := add(arrp, j)
+                        let output := mload(jOffset)
+                        mstore(jOffset, mload(iOffset))
+                        mstore(iOffset, output)
+                        leftWeight := add(leftWeight, and(0xFFFF, output))
+                        i := add(i, 32)
+                        continue
+                    }
+
+                    if eq(i, j) { leftWeight := add(leftWeight, and(0xFFFF, mload(add(arrp, j)))) }
+                    break
                 }
 
-                if (weightAccum + leftWeight >= targetWeight) {
-                    right = j;
-                } else {
-                    weightAccum += leftWeight;
-                    left = j + 32;
+                let nextWeightAccum := add(weightAccum, leftWeight)
+                if lt(nextWeightAccum, targetWeight) {
+                    weightAccum := nextWeightAccum
+                    left := add(j, 32)
+                    continue
                 }
+                right := j
             }
+            r := mload(add(arrp, left))
         }
-
-        assert(false);
-        return 0;
     }
 
     function getRingState()
@@ -198,35 +194,13 @@ contract MedianOracle {
         view
         returns (int256 currTick, uint256 ringCurr, uint256 ringSize, uint256 lastUpdate)
     {
-        // (currTick, ringCurr, lastUpdate) = state.unpack();
-        currTick = state.currTick();
-        ringCurr = state.ringCurr();
+        (currTick, ringCurr, lastUpdate) = state.unpack();
         ringSize = RING_SIZE;
-        lastUpdate = state.lastUpdate();
-    }
-
-    // Array access without bounds checking
-    function memload(uint256 arrp, uint256 i) internal pure returns (uint256 ret) {
-        assembly {
-            ret := mload(add(arrp, i))
-        }
-    }
-
-    // Swap two items in array without bounds checking, returns new element in i
-
-    function memswap(uint256 arrp, uint256 i, uint256 j) internal pure returns (uint256 output) {
-        assembly {
-            let iOffset := add(arrp, i)
-            let jOffset := add(arrp, j)
-            output := mload(jOffset)
-            mstore(jOffset, mload(iOffset))
-            mstore(iOffset, output)
-        }
     }
 
     function writeRing(uint256 index, int256 tick, uint256 duration) internal {
+        uint256 packed = (uint256(uint16(int16(tick))) << 16) | duration;
         assembly {
-            let packed := or(duration, sar(16, tick))
             let shift := mul(32, mod(index, 8))
             let slot := add(ringBuffer.slot, div(index, 8))
             let value := sload(slot)
