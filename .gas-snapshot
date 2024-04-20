@@ -1,0 +1,7 @@
+MedianOracleDiffTest:invariant_Equivalent() (runs: 1000, calls: 5000, reverts: 1624)
+MedianOracleTest:testQuantizeTick_Negative(int256) (runs: 10004, μ: 9277, ~: 9381)
+MedianOracleTest:testQuantizeTick_Nonnegative(int256) (runs: 10004, μ: 8751, ~: 8934)
+MedianOracleTest:testTickQuantization() (gas: 112840)
+MedianOracleTest:testUnquantizeTick(int256) (runs: 10004, μ: 8983, ~: 8785)
+RingStateLibTest:testInit(uint256) (runs: 10004, μ: 9337, ~: 9060)
+RingStateLibTest:testPackUnpack(int256,uint256,uint256) (runs: 10004, μ: 13297, ~: 13178)

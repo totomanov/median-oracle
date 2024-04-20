@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity =0.7.6;
 
-import './Oracle.sol';
+import "./Oracle.sol";
 
 contract StubUniswapV3Pool {
     using Oracle for Oracle.Observation[65535];
@@ -60,42 +60,28 @@ contract StubUniswapV3Pool {
     function updateOracle(int24 newTick) external {
         Slot0 memory slot0Start = slot0;
 
-        (uint16 observationIndex, uint16 observationCardinality) =
-            observations.write(
-                slot0Start.observationIndex,
-                _blockTimestamp(),
-                slot0Start.tick,
-                0,
-                slot0Start.observationCardinality,
-                slot0Start.observationCardinalityNext
-            );
-        (slot0.sqrtPriceX96, slot0.tick, slot0.observationIndex, slot0.observationCardinality) = (
+        (uint16 observationIndex, uint16 observationCardinality) = observations.write(
+            slot0Start.observationIndex,
+            _blockTimestamp(),
+            slot0Start.tick,
             0,
-            newTick,
-            observationIndex,
-            observationCardinality
+            slot0Start.observationCardinality,
+            slot0Start.observationCardinalityNext
         );
+        (slot0.sqrtPriceX96, slot0.tick, slot0.observationIndex, slot0.observationCardinality) =
+            (0, newTick, observationIndex, observationCardinality);
     }
 
-    function readOracle(uint16 desiredAge) external view returns (uint16, int24, int24) { // returns (actualAge, median=0, average)
+    function readOracle(uint16 desiredAge) external view returns (uint16, int24, int24) {
+        // returns (actualAge, median=0, average)
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = desiredAge;
         secondsAgos[1] = 0;
 
-        (int56[] memory tickCumulatives,) =
-            observations.observe(
-                _blockTimestamp(),
-                secondsAgos,
-                slot0.tick,
-                slot0.observationIndex,
-                0,
-                slot0.observationCardinality
-            );
-
-        return (
-            desiredAge,
-            uint16(0),
-            int24((tickCumulatives[1] - tickCumulatives[0]) / int56(int(desiredAge)))
+        (int56[] memory tickCumulatives,) = observations.observe(
+            _blockTimestamp(), secondsAgos, slot0.tick, slot0.observationIndex, 0, slot0.observationCardinality
         );
+
+        return (desiredAge, uint16(0), int24((tickCumulatives[1] - tickCumulatives[0]) / int56(int256(desiredAge))));
     }
 }

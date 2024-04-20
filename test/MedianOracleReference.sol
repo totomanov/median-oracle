@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.0;
 
-contract MedianOracle {
+/// @notice The reference implementation of MedianOracle
+contract MedianOracleReference {
     int constant TICK_TRUNCATION = 30;
     uint[8192] ringBuffer;
 
