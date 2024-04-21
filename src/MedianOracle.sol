@@ -7,6 +7,11 @@ import {RingState, RingStateLib} from "src/RingStateLib.sol";
 contract MedianOracle {
     uint256 internal constant MAX_AGE = 65535;
     uint256 internal constant MAX_RING_SIZE = 65535;
+    int256 internal constant TICK_TRUNCATION = 30;
+    int256 internal constant TICK_TRUNCATION_HALF = 15;
+    int256 internal constant TICK_QUANTISATION_ADDEND_NEG = -29;
+    int24 internal constant TICK_MIN = -887272;
+    int24 internal constant TICK_MAX = 887272;
     uint256 internal immutable RING_SIZE;
     RingState internal state;
     uint256[MAX_RING_SIZE] internal ringBuffer;
@@ -20,8 +25,13 @@ contract MedianOracle {
     }
 
     function updateOracle(int256 newTick) external {
-        TickLib.checkBounds(newTick);
-        newTick = TickLib.quantise(newTick);
+        assembly {
+            if or(slt(newTick, TICK_MIN), sgt(newTick, TICK_MAX)) { revert(0, 0) }
+
+            let t := newTick
+            newTick := mul(slt(t, 0), TICK_QUANTISATION_ADDEND_NEG)
+            newTick := sdiv(add(t, newTick), TICK_TRUNCATION)
+        }
 
         (int256 currTick, uint256 ringCurr, uint256 lastUpdate) = state.unpack();
         if (newTick == currTick) return;
@@ -41,42 +51,37 @@ contract MedianOracle {
     function readOracle(uint256 desiredAge) external view returns (uint256, int256, int256) {
         // returns (actualAge, median, average)
         if (desiredAge > MAX_AGE) revert OutOfRange();
+        (int256 currTick, uint256 ringCurr, uint256 cache) = state.unpack();
 
         unchecked {
-            (int256 currTick, uint256 ringCurr, uint256 cache) = state.unpack();
-
             uint256[] memory arr;
             uint256 actualAge = 0;
 
             // Load ring buffer entries into memory
-
             {
                 uint256 arrSize = 0;
                 uint256 freeMemoryPointer;
+                /// @solidity memory-safe-assembly
                 assembly {
                     arr := mload(0x40)
                     freeMemoryPointer := add(arr, 0x20)
-                }
 
-                // Populate first element in arr with current tick, if any time has elapsed since current tick was set
+                    let duration := sub(timestamp(), cache)
+                    if gt(duration, MAX_AGE) { duration := MAX_AGE }
 
-                {
-                    uint256 duration = clampTime(block.timestamp - cache);
+                    if iszero(iszero(duration)) {
+                        if gt(duration, desiredAge) { duration := desiredAge }
+                        actualAge := add(actualAge, duration)
+                        let packed := or(duration, shl(16, add(currTick, 32768)))
 
-                    if (duration != 0) {
-                        if (duration > desiredAge) duration = desiredAge;
-                        actualAge += duration;
+                        mstore(freeMemoryPointer, packed)
+                        freeMemoryPointer := add(freeMemoryPointer, 0x20)
 
-                        uint256 packed = TickLib.memoryPack(currTick, duration);
-
-                        assembly {
-                            mstore(freeMemoryPointer, packed)
-                            freeMemoryPointer := add(freeMemoryPointer, 0x20)
-                        }
-                        arrSize++;
+                        arrSize := add(arrSize, 1)
                     }
 
-                    currTick = TickLib.unquantise(currTick) * int256(duration); // currTick now becomes the average accumulator
+                    currTick := add(mul(currTick, TICK_TRUNCATION), TICK_TRUNCATION_HALF)
+                    currTick := mul(currTick, duration)
                 }
 
                 // Continue populating elements until we have satisfied desiredAge
@@ -86,15 +91,12 @@ contract MedianOracle {
                     cache = type(uint256).max; // overwrite lastUpdate, use to cache storage reads
 
                     while (actualAge != desiredAge) {
-                        int256 tick;
-                        uint256 duration;
-
-                        {
-                            if (cache == type(uint256).max) cache = ringBuffer[i / 8];
-                            uint256 entry = cache >> (32 * (i % 8));
-                            tick = int256(int16(uint16((entry >> 16) & 0xFFFF)));
-                            duration = entry & 0xFFFF;
+                        if (cache == type(uint256).max) {
+                            cache = ringBuffer[i / 8];
                         }
+                        uint256 entry = cache >> (32 * (i % 8));
+                        int256 tick = int256(int16(uint16((entry >> 16) & 0xFFFF)));
+                        uint256 duration = entry & 0xFFFF;
 
                         if (duration == 0) break; // uninitialised
 
@@ -103,20 +105,23 @@ contract MedianOracle {
 
                         uint256 packed = TickLib.memoryPack(tick, duration);
 
+                        /// @solidity memory-safe-assembly
                         assembly {
                             mstore(freeMemoryPointer, packed)
                             freeMemoryPointer := add(freeMemoryPointer, 0x20)
+
+                            arrSize := add(arrSize, 1)
+                            tick := add(mul(tick, TICK_TRUNCATION), TICK_TRUNCATION_HALF)
+                            tick := mul(tick, duration)
+                            currTick := add(currTick, tick)
+                            if iszero(and(i, 7)) { cache := not(0) }
                         }
-                        arrSize++;
-
-                        currTick += TickLib.unquantise(tick) * int256(duration);
-
-                        if (i & 7 == 0) cache = type(uint256).max;
 
                         i = (i + RING_SIZE - 1) % RING_SIZE;
                         if (i == ringCurr) break; // wrapped back around
                     }
 
+                    /// @solidity memory-safe-assembly
                     assembly {
                         mstore(arr, arrSize)
                         mstore(0x40, freeMemoryPointer)
@@ -137,6 +142,7 @@ contract MedianOracle {
     /// @param targetWeight The weight to stop at.
     /// @dev Implements modified QuickSelect that accounts for item weights.
     function weightedMedian(uint256[] memory arr, uint256 targetWeight) private pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
         assembly {
             let weightAccum := 0
             let left := 0
@@ -200,6 +206,7 @@ contract MedianOracle {
 
     function writeRing(uint256 index, int256 tick, uint256 duration) internal {
         uint256 packed = (uint256(uint16(int16(tick))) << 16) | duration;
+        /// @solidity memory-safe-assembly
         assembly {
             let shift := mul(32, mod(index, 8))
             let slot := add(ringBuffer.slot, div(index, 8))
